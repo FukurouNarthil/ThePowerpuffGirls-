@@ -1,0 +1,105 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Python Flask Bucket List App</title>
+	<meta charset="utf-8">
+ 
+    
+    <link href="http://stackpath.bootstrapcdn.com/bootstrap/4.1.2/css/bootstrap.min.css" rel="stylesheet">
+ 
+    <link href="http://getbootstrap.com/examples/jumbotron-narrow/jumbotron-narrow.css" rel="stylesheet">
+    <link href="../static/signup.css" rel="stylesheet">
+	<stript src="https://code.jquery.com/jquery-3.3.1.js" type="text/javascript" charset="utf-8"></stript>
+	<script type="text/javascript" src="http://ajax.microsoft.com/ajax/jquery/jquery-1.4.min.js"></script>
+	<script type="text/javascript">
+		$(function() {
+    			$('#btnUpload').click(function() {
+ 
+        			$.ajax({
+            			url: '/upload',
+            			data: $('form').serialize(),
+            			type: 'POST',
+            			success: function(response) {
+                		console.log(response);
+            			},
+            			error: function(error) {
+                		console.log(error);
+            			}
+        		});
+    			});
+		});	
+	</script>
+    
+  </head>
+ 
+  <body>
+ 
+    <div class="container">
+      <div class="header">
+        <h3 class="text-muted">Python Flask App</h3>
+      </div>
+ 
+      <div class="jumbotron">
+        <div class="bigbox">
+    <form action="" method=post enctype=multipart/form-data>
+        <input type="file" name="file" id="fileUpload" multiple="true"  onchange="fileType(this.files)" />
+        <ul id="showContent">
+        	
+        </ul>
+        <input type="submit" value="上传文件" id='btnUpload'/>
+    </form>
+    </div>
+     <script type="text/javascript">
+ 	function $$(id)
+ 	{
+ 		return document.getElementById(id);
+ 	}
+ 	function fileType(f){
+      var strFileType=/image.*/;
+      for(var intI=0;intI<f.length;intI++)
+      {
+      	var tmpFile=f[intI];
+      	if(!tmpFile.type.match(strFileType))
+      	{
+      	alert("你上传的文件类型不符合要求！");
+      	"<span>可接受文件类型为：office文档、常见图片类型 </span>"
+        }
+        else{
+        var filesize=tmpFile.size/1024/1024;
+        if(filesize>10)
+        {
+        	alert("你输入的文件太大了！");
+        }
+        else
+        {
+        	fileUpShow(f);
+        }
+       }
+      }
+      
+ 	}
+ 	//显示文件的名称，大小和类型
+ 	function fileUpShow(f)
+ 	{
+ 		var strli="<li>"
+        for(var intr=0;intr<f.length;intr++)
+        {
+        	var tmpFile=f[intr];
+        	strli=strli+"<span>文件名称:</span>";
+        	strli=strli+"<span>"+tmpFile.name+"</span>";
+        	strli=strli+"</li>";//文件名称
+        	strli=strli+"<span>文件类型:</span>";
+ 		    strli=strli+"<span>"+tmpFile.type+"</span>";
+ 		    strli=strli+"</p >";
+ 		    strli=strli+"<span>文件大小:</span>";
+ 		    strli=strli+"<span>"+tmpFile.size/1024/1024+"</span>";
+ 		    //文件大小
+ 		    strli=strli+"</li>";
+        }
+        $$("showContent").innerHTML=strli;
+ 	}
+ </script>
+
+  </body>
+</html>
