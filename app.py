@@ -86,6 +86,7 @@ def toSignUp():
     _name = request.form['inputName']
     _email = request.form['inputEmail']
     _password = request.form['inputPassword']
+    userid = 0
 
     session.pop('user', None)
     session.pop('id', None)
@@ -109,13 +110,17 @@ def toSignUp():
         conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
         cursor = conn.cursor()
         cursor.callproc('sp_createUser', (_name, hashed_password, pubkey, privkey)) 
+	select_stmt = "SELECT id FROM users WHERE users.name = %(username)s and users.password = %(passwd)s"
+	cursor.execute(select_stmt, { 'username': _name, 'passwd': hashed_password })
         data = cursor.fetchall()
+	print(data)
 
-        if len(data) is 0:
+        if len(data):
+	    session['id'] = data
             conn.commit()
             return redirect(upDown_url) 
         else:
-            return redirect(upDown_url)
+            return render_template('signup.html')
 
 
 @app.route('/showSignIn', methods=['POST', 'GET'])
@@ -123,6 +128,9 @@ def toSignIn():
     _name = request.form['inputName']
     _password = request.form['inputPassword']
     upDown_url = url_for('upOrDown')
+
+    session.pop('user', None)
+    session.pop('id', None)
 
     if _name and _password:
         # _hashed_password = generate_password_hash(_password)
@@ -184,6 +192,6 @@ def post_file(filename):
 
 if __name__ == '__main__':
     app.secret_key = 'secretkey'
-    app.run(host='0.0.0.0', debug="True", threaded=True)
+    app.run(host='0.0.0.0', debug="True", threaded=True, ssl_context=('cert.pem', 'key.pem'))
 
 
