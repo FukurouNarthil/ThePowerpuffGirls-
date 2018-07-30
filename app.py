@@ -6,17 +6,19 @@ from Crypto import Random
 from Crypto.Cipher import PKCS1_v1_5 as Cipher_pkcs1_v1_5
 from Crypto.Signature import PKCS1_v1_5 as Signature_pkcs1_v1_5
 from Crypto.PublicKey import RSA
+from Crypto.Hash import SHA
 import hashlib
 import os
+import shutil
 from werkzeug import secure_filename
 from OpenSSL.crypto import load_privatekey, FILETYPE_PEM, sign
 import MySQLdb
 import datetime
-import sys
+import sys, struct
 import random
-import re
 import rsa
 import base64
+import zipfile
 from Crypto.Cipher import AES
 from binascii import b2a_hex, a2b_hex
 
@@ -62,29 +64,52 @@ class prpcrypt():
     def __init__(self, key):
         self.key = key
         self.mode = AES.MODE_CBC
-	self.iv = os.urandom(16)
 
+    def encrypt(self, inf, chunksize=64*1024):
+        iv = os.urandom(16)
+        encryptor = AES.new(self.key, self.mode, iv)
+        infile = open(inf, 'rb')
+        filesize = os.path.getsize(inf)
+        cipher = b''
 
-    def encrypt(self, text):
-        cryptor = AES.new(self.key, self.mode, self.iv)
-        
-        length = 32
-        count = len(text)
-        if (count % length != 0):
-            add = length - (count % length)
-        else:
-            add = 0
-        text = text + ('\0' * add)
-        self.ciphertext = cryptor.encrypt(text)
-        
-       
-        return b2a_hex(self.ciphertext)
+        while True:
 
-    
-    def decrypt(self, text):
-        cryptor = AES.new(self.key, self.mode, self.iv)
-        plain_text = cryptor.decrypt(a2b_hex(text))
-        return plain_text.rstrip('\0')
+            chunk = infile.read(chunksize)
+            if len(chunk) == 0:
+                break
+            elif len(chunk) % 16 != 0:
+                chunk += '\0'.encode('ascii') * (16 - len(chunk) % 16)
+            cipher += encryptor.encrypt(chunk)
+
+        infile.close()
+
+        outfile = open(inf, 'wb')
+        outfile.write(struct.pack('<Q', filesize))
+        outfile.write(iv)
+        outfile.write(cipher)
+        outfile.close()
+
+    def decrypt(self, inf, chunksize=24*1024):
+        infile = open(inf, 'rb')
+        origsize = struct.unpack('<Q', infile.read(struct.calcsize('Q')))[0]
+        iv = infile.read(16)
+
+        decryptor = AES.new(self.key, self.mode, iv)
+        plain_text = b''
+
+        while True:
+            chunk = infile.read(chunksize)
+            # print(chunk)
+            if len(chunk) == 0:
+                break
+            plain_text += chunk
+
+        infile.close()
+        outfile = open(inf, 'wb')
+        outfile.write(decryptor.decrypt(plain_text))
+        outfile.truncate(origsize)
+
+        outfile.close()
 
 
 @app.route('/upload', methods=['POST', 'GET'])
@@ -109,14 +134,18 @@ def upload_file():
 	    conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
             cursor = conn.cursor()
             file = request.files['file']
-            f = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb+")
+            f = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb")
             data = f.read()
 	    f.close()
             
-            hash = hashlib.sha256()
-            hash.update(data)
-            hashed_data = hash.hexdigest()
-
+	    # sign
+            digest = SHA.new()
+	    digest.update(data)
+	    
+	    hash_file_name = filename.split('.')[0]+"_hash.txt"
+	    hash_file = open(os.path.join(app.config['UPLOAD_FOLDER'], hash_file_name), "wb")
+	    hash_file.write(digest)
+	    hash_file.close()
             
             key = ''  
             base_str = 'ABCDEFGHIGKLMNOPQRSTUVWXYZabcdefghigklmnopqrstuvwxyz0123456789'  
@@ -126,17 +155,14 @@ def upload_file():
 	 
 	    # encrypt file
             pc = prpcrypt(key)  
-            e_data = pc.encrypt(data)
-	    f = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "w")
-	    f.write(e_data)
-	    f.close()
+            pc.encrypt(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 	    
 	    # encrypt key
             cursor.execute("SELECT pubkey FROM users where users.id = (%s)", [session['id']])
             r_pubkey = cursor.fetchall()[0]
 	    rsakey = RSA.importKey(r_pubkey)
 	    cipher = Cipher_pkcs1_v1_5.new(rsakey)
-	    enckey = base64.b64encode(cipher.encrypt(key))
+	    enckey = base64.b64encode(cipher.encrypt(key.encode("utf-8")))
 
 	    print("%s %s", filename, fsize)
 	   
@@ -144,26 +170,33 @@ def upload_file():
                 filename,  
                 fsize, 
                 enckey, 
-                hashed_data,  
+                digest,  
                 session['id'],  
-                now_time))  
+                now_time))
+	    cursor.callproc('sp_createFile', (
+                hash_file_name,  
+                1, 
+                '', 
+                '',  
+                session['id'],  
+                now_time))
             data = cursor.fetchall()
 	    if len(data) is 0:
             	flash('File successfully uploaded!')
             	conn.commit()
-		return '''<h2>You've upload it successfully!</h2>'''
+		return '''<h2>You've upload it successfully!</h2></br>
+			<p><a  class="btn btn-default" href="upOrDown" role="button">Go Back</a></p>'''
     return render_template('upload.html')
 
 
 def generateKey():
+    random_generator = Random.new().read
 
-    rsa = RSA.generate(1024)
+    rsa = RSA.generate(1024, random_generator)
 
     private_pem = rsa.exportKey()
     public_pem = rsa.publickey().exportKey()
-    print(private_pem)
-    print(public_pem)
-    return {'pubkey': public_pem, 'privkey': private_pem }
+    return {'pubkey': public_pem, 'privkey': private_pem}
 
 
 @app.route('/showSignUp', methods=['POST', 'GET'])
@@ -246,6 +279,7 @@ def toSignIn():
 def list_files():
     """Endpoint to list files on the server."""
     files = []
+    hash_files = []
     if 'id' in session:
 	conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
         cursor = conn.cursor()
@@ -258,16 +292,22 @@ def list_files():
 	    
 	    for i in list(data):
 		print(list(i))
-                if session['id'] in list(i) and os.path.isfile(path):
+                if session['id'] in list(i) and os.path.isfile(path) and 'hash' not in filename:
                     files.append(filename)
 	            print(files)
+		elif session['id'] in list(i) and 'hash' in filename:
+		    hash_files.append(filename)
 	cursor.close()
-    return render_template('download.html', files=files)
+        return render_template('download.html', files=files, hash_files=hash_files)
 
 
 @app.route('/download/<path:filename>')
 def get_file(filename):
     """Download a file."""
+    if filename == 'cert.pem':
+	return send_from_directory("", filename, as_attachment=True)
+    if 'hash' in filename:
+	return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
     if 'id' in session:
         conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
         cursor = conn.cursor()
@@ -276,19 +316,63 @@ def get_file(filename):
 	cursor.execute("SELECT enckey FROM files WHERE files.name = (%s) and files.uid = (%s)", [filename, session['id']])
 	enckey = cursor.fetchall()[0][0]
        
-	f = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "wb+")
-	data = f.read()
 	# decrypt aes key
 	rsakey = RSA.importKey(privkey)
 	cipher = Cipher_pkcs1_v1_5.new(rsakey)
 	# decrypt file
-	random_generator = Random.new().read
-	key = cipher.decrypt(base64.b64decode(enckey), random_generator)
+	sentinel = Random.new().read
+	key = cipher.decrypt(base64.b64decode(enckey), sentinel).decode("utf-8")
 	pc = prpcrypt(key)  
-        text = pc.decrypt(data)
-	f.write(text)
-	f.close()
-    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+        pc.decrypt(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+    
+    # anonymous users downloading
+    else:
+	conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
+        cursor = conn.cursor()
+	cursor.execute("SELECT enckey, uid FROM files WHERE files.name = (%s)", [filename])
+	enckey = cursor.fetchall()[0][0]
+	uid = cursor.fetchall()[0][1]
+	cursor.execute("SELECT privkey FROM users WHERE users.id = (%s)", [uid])
+        privkey = cursor.fetchall()[0][0]
+       
+	# decrypt aes key
+	rsakey = RSA.importKey(privkey)
+	cipher = Cipher_pkcs1_v1_5.new(rsakey)
+	# save key
+	sentinel = Random.new().read
+	key = cipher.decrypt(base64.b64decode(enckey), sentinel).decode("utf-8")
+	keyfile = open("key.txt", "w")
+	keyfile.write(key)
+
+	hash_file_name = filename.split('.')[0]+"_hash.txt"
+	h = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb")
+
+	with open('key.pem') as f:
+	    server_priv_key = f.read()
+	    server_rsa_key = RSA.importKey(server_priv_key)
+	    signer = Signature_pkcs1_v1_5.new(server_rsa_key)
+            sign = signer.sign(h)
+	    signature = base64.b64encode(sign)
+	s = open("sign.txt", "w")
+	s.write(signature)
+	s.close()
+
+	temp_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'temp')
+
+	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], filename), os.path.join(temp_dir, filename))
+	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], 'key.txt'), os.path.join(temp_dir, 'key.txt'))
+	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], hash_file_name), os.path.join(temp_dir, hash_file_name))
+	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], 'sign.txt'), os.path.join(temp_dir, 'sign.txt'))
+	zipf = zipfile.ZipFile(filename, 'w')
+	pre_len = len(os.path.dirname(temp_dir))
+	for parent, dirnames, filenames in os.walk(temp_dir):
+	    for item in filenames:
+		pathfile = os.path.join(parent, item)
+		arcname = pathfile[prelen:].strip(os.path.sep)
+		zipf.write(pathfile, arcname)
+	zipf.close()
+	return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 
 if __name__ == '__main__':

@@ -30,9 +30,22 @@
         </div>
  
         <div class="jumbotron">
+	    <p><a class="btn btn-lg btn-success" href="download/cert.pem" role="button">Download Certificate</a></p>
 	    {% for item in files %}
-		<h5>{{item}}</h5>
-		<p><a class="btn btn-lg btn-success" href="download/{{item}}" role="button">Download</a></p>
+		<table>
+		    <tr>
+			<th>Filename</th>
+			<th>Download</th>
+		    </tr>
+		    <tr>
+			<td><h5>{{item}}</h5></td>
+			<td><p><a class="btn btn-lg btn-success" href="download/{{item}}" role="button">Download</a></p></td>
+			<!--<td><p><a class="btn btn-lg btn-success" href="download/{{item}}" role="button">Download</a></p></td>-->
+		    </tr>
+		</table>
+	    {% endfor %}
+	    {% for item in hash_files %}
+	    	<p><a class="btn btn-lg btn-success" href="download/{{item}}" role="button">Download hash_1</a></p>
 	    {% endfor %}
         </div>
  

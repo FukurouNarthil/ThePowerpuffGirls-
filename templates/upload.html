@@ -56,16 +56,11 @@
  		return document.getElementById(id);
  	}
  	function fileType(f){
-      var strFileType=['png', 'txt'];
+      var strFileType=/.image */;
       for(var intI=0;intI<f.length;intI++)
       {
       	var tmpFile=f[intI];
-      	if(!tmpFile.type.match(strFileType))
-      	{
-      	    alert("你上传的文件类型不符合要求！");
-      	"<span>可接受文件类型为：office文档、常见图片类型 </span>"
-        }
-        else{
+      	
         var filesize=tmpFile.size/1024/1024;
         if(filesize>10)
         {
@@ -75,7 +70,7 @@
         {
         	fileUpShow(f);
         }
-       }
+       
       }
       
  	}
