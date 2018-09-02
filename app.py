@@ -18,7 +18,7 @@ import sys, struct
 import random
 import rsa
 import base64
-import zipfile
+import tarfile
 from Crypto.Cipher import AES
 from binascii import b2a_hex, a2b_hex
 
@@ -31,6 +31,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 @app.route('/')
 def main():
+    session.pop('id', None)
     return render_template('index.html')
 
 
@@ -144,7 +145,7 @@ def upload_file():
 	    
 	    hash_file_name = filename.split('.')[0]+"_hash.txt"
 	    hash_file = open(os.path.join(app.config['UPLOAD_FOLDER'], hash_file_name), "wb")
-	    hash_file.write(digest)
+	    hash_file.write(data)
 	    hash_file.close()
             
             key = ''  
@@ -299,6 +300,8 @@ def list_files():
 		    hash_files.append(filename)
 	cursor.close()
         return render_template('download.html', files=files, hash_files=hash_files)
+    else:
+	return send_from_directory("", 'cert.pem', as_attachment=True)	
 
 
 @app.route('/download/<path:filename>')
@@ -328,51 +331,61 @@ def get_file(filename):
     
     # anonymous users downloading
     else:
-	conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
+	print("no session")
+        conn = MySQLdb.connect(host="localhost", port=3306, user="root", passwd="123456", db="acdemo")
         cursor = conn.cursor()
-	cursor.execute("SELECT enckey, uid FROM files WHERE files.name = (%s)", [filename])
-	enckey = cursor.fetchall()[0][0]
-	uid = cursor.fetchall()[0][1]
-	cursor.execute("SELECT privkey FROM users WHERE users.id = (%s)", [uid])
+        cursor.execute("SELECT enckey, uid FROM files WHERE files.name = (%s)", [filename])
+        data = cursor.fetchall()
+        print(data)
+        enckey = data[0][0]
+        uid = data[0][1]
+        cursor.execute("SELECT privkey FROM users WHERE users.id = (%s)", [uid])
+
         privkey = cursor.fetchall()[0][0]
-       
-	# decrypt aes key
-	rsakey = RSA.importKey(privkey)
-	cipher = Cipher_pkcs1_v1_5.new(rsakey)
-	# save key
-	sentinel = Random.new().read
-	key = cipher.decrypt(base64.b64decode(enckey), sentinel).decode("utf-8")
-	keyfile = open("key.txt", "w")
-	keyfile.write(key)
 
-	hash_file_name = filename.split('.')[0]+"_hash.txt"
-	h = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb")
+        print(enckey)
 
-	with open('key.pem') as f:
-	    server_priv_key = f.read()
-	    server_rsa_key = RSA.importKey(server_priv_key)
-	    signer = Signature_pkcs1_v1_5.new(server_rsa_key)
-            sign = signer.sign(h)
-	    signature = base64.b64encode(sign)
-	s = open("sign.txt", "w")
-	s.write(signature)
-	s.close()
+        # decrypt aes key
+        rsakey = RSA.importKey(privkey)
+        cipher = Cipher_pkcs1_v1_5.new(rsakey)
+        # save key
+        sentinel = Random.new().read
+        key = cipher.decrypt(base64.b64decode(enckey), sentinel).decode("utf-8")
+        keyfile = open("key.txt", "w")
+        keyfile.write(key)
+        keyfile.close()
 
-	temp_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'temp')
+        hash_file_name = filename.split('.')[0] + "_hash.txt"
+        h = open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb")
+        file_text = h.read()
+        digest = SHA.new()
+        digest.update(file_text)
 
-	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], filename), os.path.join(temp_dir, filename))
-	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], 'key.txt'), os.path.join(temp_dir, 'key.txt'))
-	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], hash_file_name), os.path.join(temp_dir, hash_file_name))
-	os.rename(os.path.join(app.config['UPLOAD_FOLDER'], 'sign.txt'), os.path.join(temp_dir, 'sign.txt'))
-	zipf = zipfile.ZipFile(filename, 'w')
-	pre_len = len(os.path.dirname(temp_dir))
-	for parent, dirnames, filenames in os.walk(temp_dir):
-	    for item in filenames:
-		pathfile = os.path.join(parent, item)
-		arcname = pathfile[prelen:].strip(os.path.sep)
-		zipf.write(pathfile, arcname)
-	zipf.close()
-	return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+        with open('key.pem') as f:
+            server_priv_key = f.read()
+            server_rsa_key = RSA.importKey(server_priv_key)
+            signer = Signature_pkcs1_v1_5.new(server_rsa_key)
+            sign = signer.sign(digest)
+            signature = base64.b64encode(sign)
+        s = open("sign.txt", "w")
+        s.write(signature)
+        s.close()
+
+        temp_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'temp')
+        os.makedirs(temp_dir)
+        print(os.path.join(temp_dir, filename))
+
+        os.rename(os.path.join(app.config['UPLOAD_FOLDER'], filename), os.path.join(temp_dir, filename))
+        os.rename('key.txt', os.path.join(temp_dir, 'key.txt'))
+        os.rename(os.path.join(app.config['UPLOAD_FOLDER'], hash_file_name), os.path.join(temp_dir, hash_file_name))
+        os.rename('sign.txt', os.path.join(temp_dir, 'sign.txt'))
+
+        def make_targz(output_filename, source_dir):
+            with tarfile.open(output_filename, "w:gz") as tar:
+                tar.add(source_dir, arcname=os.path.basename(source_dir))
+
+        make_targz(os.path.join(app.config['UPLOAD_FOLDER'], filename + '.tar.gz'), temp_dir)
+        return send_from_directory(UPLOAD_FOLDER, filename + '.tar.gz', as_attachment=True)
 
 
 if __name__ == '__main__':
